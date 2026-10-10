@@ -15,7 +15,7 @@ Usage:
     python tools/build_assets.py --check            # only verify assets vs data/tiles.json
 """
 import argparse
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -46,8 +46,24 @@ def find_source(src, camera, zone, idx):
     return matches[0] if matches else None
 
 
+def require_pillow_webp():
+    try:
+        from PIL import features
+    except ImportError:
+        sys.exit('Pillow is not installed. Termux: pkg install python-pillow   PC: pip install Pillow')
+    if not features.check('webp'):
+        sys.exit('This Pillow build has no WebP support. Termux: pkg install libwebp && pkg reinstall python-pillow')
+
+
 def convert(task):
     src_path, dst_path, quality = task
+    try:
+        return _convert(src_path, dst_path, quality)
+    except Exception as exc:  # report and keep going; one bad file must not stop 840
+        return src_path, f'{type(exc).__name__}: {exc}'
+
+
+def _convert(src_path, dst_path, quality):
     from PIL import Image
     with Image.open(src_path) as img:
         img = img.convert('RGBA')
@@ -57,7 +73,7 @@ def convert(task):
         tmp = dst_path.with_suffix('.tmp.webp')
         # exact=False lets libwebp drop RGB data under fully transparent pixels,
         # which is most of every piece -> files shrink ~40x versus PNG.
-        img.save(tmp, 'WEBP', quality=quality, method=6, exact=False)
+        img.save(tmp, 'WEBP', quality=quality, method=4, exact=False)
         os.replace(tmp, dst_path)
     return src_path, None
 
@@ -84,7 +100,7 @@ def main():
     parser.add_argument('--src', type=Path, help='Folder with <camera>/<zone>/*.png puzzle pieces')
     parser.add_argument('--quality', type=int, default=82, help='WebP quality (default 82)')
     parser.add_argument('--overwrite', action='store_true', help='Re-encode layers that already exist')
-    parser.add_argument('--workers', type=int, default=os.cpu_count() or 2)
+    parser.add_argument('--workers', type=int, default=4)
     parser.add_argument('--check', action='store_true', help='Only verify assets against the catalog')
     parser.add_argument('--strict', action='store_true', help='With --check: exit 1 when layers are missing')
     args = parser.parse_args()
@@ -97,8 +113,17 @@ def main():
             print(f'::warning::{len(missing)} tile layers are missing; the app will show them as gaps')
         sys.exit(1 if orphans or (args.strict and missing) else 0)
 
-    if not args.src or not args.src.is_dir():
-        parser.error('--src must point to an existing puzzle folder')
+    if not args.src:
+        parser.error('--src is required (folder that contains entrance/ and reverse/)')
+    if not args.src.is_dir():
+        sys.exit(f'--src folder does not exist or is not readable: {args.src}\n'
+                 'Termux: run termux-setup-storage once and allow file access.')
+    cams_found = [c for c in CAMERAS if (args.src / c).is_dir()]
+    if not cams_found:
+        listing = sorted(p.name for p in args.src.iterdir())[:20]
+        sys.exit(f'No entrance/ or reverse/ folder inside {args.src}\nIt contains: {listing}\n'
+                 'Point --src at the folder that directly contains entrance/ and reverse/.')
+    require_pillow_webp()
 
     tasks, not_found = [], []
     for cam in CAMERAS:
@@ -113,19 +138,23 @@ def main():
                 else:
                     tasks.append((src, dst, args.quality))
 
-    print(f'Converting {len(tasks)} pieces with {args.workers} workers...')
+    print(f'Converting {len(tasks)} pieces with {args.workers} threads...')
     errors = []
-    with ProcessPoolExecutor(max_workers=args.workers) as pool:
+    # Threads, not processes: Pillow releases the GIL while encoding, and
+    # multiprocessing is broken on Android/Termux (no sem_open).
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
         for n, (src, err) in enumerate(pool.map(convert, tasks), 1):
             if err:
                 errors.append(f'{src}: {err}')
-            if n % 50 == 0 or n == len(tasks):
+            if n % 10 == 0 or n == len(tasks):
                 print(f'  [{n}/{len(tasks)}]')
 
     if not_found:
         print(f'No source PNG for {len(not_found)} layers (first: {", ".join(not_found[:5])})')
-    for e in errors:
+    for e in errors[:20]:
         print(f'ERROR {e}')
+    if len(errors) > 20:
+        print(f'... and {len(errors) - 20} more errors')
     check(indices)
     size = sum(p.stat().st_size for p in ASSETS.rglob('*.webp'))
     print(f'assets/ total: {size / 1e6:.1f} MB')

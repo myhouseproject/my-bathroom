@@ -1,0 +1,5 @@
+# Source PNG pieces live in Google Drive (Dom_Lazienka_R07_Puzzle); only WebP layers are committed.
+*.png
+*.tmp.webp
+__pycache__/
+_site/

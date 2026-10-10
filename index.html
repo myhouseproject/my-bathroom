@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kreator Puzzli Łazienki</title>
+  <style>
+    :root {
+      --bg: #121417;
+      --card-bg: #1e2228;
+      --card-border: #2e3440;
+      --field-bg: #14171c;
+      --field-border: #374151;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --text: #f3f4f6;
+      --text-muted: #9ca3af;
+      --warn: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 12px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+    header { text-align: center; margin-bottom: 14px; max-width: 900px; width: 100%; }
+    h1 { font-size: 1.4rem; color: #fff; margin-bottom: 4px; }
+    p.subtitle { font-size: 0.85rem; color: var(--text-muted); }
+
+    .main-layout { display: grid; grid-template-columns: 1fr; gap: 16px; max-width: 1200px; width: 100%; }
+    @media (min-width: 900px) {
+      .main-layout { grid-template-columns: 3fr 2fr; align-items: start; }
+      .viewer-card { position: sticky; top: 12px; }
+    }
+
+    .viewer-card, .controls-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; }
+    .viewer-card { padding: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+    .stage-wrapper { position: relative; width: 100%; aspect-ratio: 2000 / 1600; background: #000; border-radius: 8px; overflow: hidden; }
+    .stage-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .stage-layer.missing { visibility: hidden; }
+    .loading { position: absolute; top: 8px; right: 8px; font-size: 0.72rem; padding: 3px 8px; border-radius: 4px; background: rgba(0,0,0,0.6); color: var(--text-muted); display: none; }
+    .loading.on { display: block; }
+
+    .controls-card { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+    .camera-switcher { display: flex; gap: 8px; background: var(--field-bg); padding: 4px; border-radius: 8px; }
+    .cam-btn { flex: 1; padding: 8px 12px; border: none; background: transparent; color: var(--text-muted); border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.85rem; }
+    .cam-btn.active { background: var(--accent); color: #fff; }
+
+    .surface-group { display: flex; flex-direction: column; gap: 6px; }
+    .surface-header { display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; font-weight: 600; color: #d1d5db; }
+    .surface-tag { font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; background: #2a313d; color: #93c5fd; }
+    .surface-tag.missing { color: var(--warn); }
+    .picker { display: flex; gap: 6px; }
+    .step { flex: 0 0 38px; background: var(--field-bg); color: var(--text); border: 1px solid var(--field-border); border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+    .step:hover { border-color: var(--accent); }
+    select { flex: 1; min-width: 0; background: var(--field-bg); color: #f9fafb; border: 1px solid var(--field-border); border-radius: 6px; padding: 8px 10px; font-size: 0.85rem; outline: none; cursor: pointer; }
+    select:focus { border-color: var(--accent); }
+
+    .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; }
+    .btn { padding: 10px 14px; border-radius: 8px; font-weight: 600; font-size: 0.85rem; cursor: pointer; border: none; }
+    .btn-secondary { background: #2a313d; color: #e5e7eb; }
+    .btn-secondary:hover { background: #374151; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: var(--accent-hover); }
+    .status { font-size: 0.75rem; color: var(--text-muted); min-height: 1em; }
+    .error { max-width: 900px; width: 100%; background: #3b1d11; border: 1px solid #ea580c; color: #ffedd5; padding: 12px 16px; border-radius: 8px; margin-bottom: 14px; font-size: 0.85rem; display: none; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🧩 Kreator Puzzli Łazienki</h1>
+    <p class="subtitle">Wybierz płytki dla każdej z 5 płaszczyzn. Link w pasku adresu zapamiętuje zestaw — możesz go komuś wysłać.</p>
+  </header>
+
+  <div class="error" id="error"></div>
+
+  <div class="main-layout">
+    <div class="viewer-card">
+      <div class="stage-wrapper">
+        <!-- Kolejność warstw = kolejność rysowania przy eksporcie -->
+        <img id="layer-sufit" class="stage-layer" alt="">
+        <img id="layer-sciana_srodkowa" class="stage-layer" alt="">
+        <img id="layer-sciana_lewa" class="stage-layer" alt="">
+        <img id="layer-sciana_prawa" class="stage-layer" alt="">
+        <img id="layer-podloga" class="stage-layer" alt="">
+        <div class="loading" id="loading">ładowanie…</div>
+      </div>
+    </div>
+
+    <div class="controls-card">
+      <div class="camera-switcher">
+        <button id="cam-entrance" class="cam-btn" data-cam="entrance">👁️ Wejście</button>
+        <button id="cam-reverse" class="cam-btn" data-cam="reverse">🔄 Odwrócony</button>
+      </div>
+
+      <div id="surfaces"></div>
+
+      <div class="button-row">
+        <button class="btn btn-secondary" id="btn-random">🎲 Losuj zestaw</button>
+        <button class="btn btn-secondary" id="btn-match">🎯 Ściany i sufit jak środkowa</button>
+        <button class="btn btn-secondary" id="btn-copy">🔗 Kopiuj link</button>
+        <button class="btn btn-primary" id="btn-download">💾 Pobierz PNG</button>
+      </div>
+      <div class="status" id="status"></div>
+    </div>
+  </div>
+
+  <script>
+    const ZONES = [
+      { id: 'podloga',         key: 'p', label: '🛁 Podłoga' },
+      { id: 'sciana_lewa',     key: 'l', label: '🧱 Ściana lewa' },
+      { id: 'sciana_srodkowa', key: 'm', label: '🚿 Ściana środkowa (akcentowa)' },
+      { id: 'sciana_prawa',    key: 'r', label: '🧱 Ściana prawa' },
+      { id: 'sufit',           key: 's', label: '💡 Sufit' },
+    ];
+    const DRAW_ORDER = ['sufit', 'sciana_srodkowa', 'sciana_lewa', 'sciana_prawa', 'podloga'];
+    const DEFAULTS = { podloga: 2, sciana_lewa: 1, sciana_srodkowa: 67, sciana_prawa: 22, sufit: 1 };
+
+    let TILES = [];
+    const state = { camera: 'entrance', sel: { ...DEFAULTS } };
+    let pending = 0;
+
+    const $ = id => document.getElementById(id);
+    const pad = n => String(n).padStart(2, '0');
+    const tileByIndex = idx => TILES.find(t => t.index === idx);
+    const assetUrl = (cam, zone, idx) => `assets/${cam}/${zone}/${pad(idx)}.webp`;
+
+    function readHash() {
+      const h = new URLSearchParams(location.hash.slice(1));
+      if (h.get('cam') === 'reverse' || h.get('cam') === 'entrance') state.camera = h.get('cam');
+      ZONES.forEach(z => {
+        const v = parseInt(h.get(z.key), 10);
+        if (tileByIndex(v)) state.sel[z.id] = v;
+      });
+    }
+
+    function writeHash() {
+      const h = new URLSearchParams({ cam: state.camera });
+      ZONES.forEach(z => h.set(z.key, state.sel[z.id]));
+      history.replaceState(null, '', '#' + h.toString());
+    }
+
+    function buildControls() {
+      const root = $('surfaces');
+      root.innerHTML = '';
+      ZONES.forEach(z => {
+        const g = document.createElement('div');
+        g.className = 'surface-group';
+        g.style.marginBottom = '14px';
+        g.innerHTML = `
+          <div class="surface-header"><span>${z.label}</span><span class="surface-tag" id="tag-${z.id}"></span></div>
+          <div class="picker">
+            <button class="step" data-zone="${z.id}" data-dir="-1" aria-label="poprzednia">◀</button>
+            <select id="sel-${z.id}"></select>
+            <button class="step" data-zone="${z.id}" data-dir="1" aria-label="następna">▶</button>
+          </div>`;
+        root.appendChild(g);
+        const sel = g.querySelector('select');
+        TILES.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t.index;
+          opt.textContent = `${pad(t.index)}. ${t.manufacturer} – ${t.product} (${t.format})`;
+          sel.appendChild(opt);
+        });
+        sel.addEventListener('change', () => setTile(z.id, parseInt(sel.value, 10)));
+      });
+      root.querySelectorAll('.step').forEach(b => b.addEventListener('click', () => {
+        const zone = b.dataset.zone;
+        const i = TILES.findIndex(t => t.index === state.sel[zone]);
+        const next = TILES[(i + parseInt(b.dataset.dir, 10) + TILES.length) % TILES.length];
+        setTile(zone, next.index);
+      }));
+    }
+
+    function setTile(zone, idx) {
+      state.sel[zone] = idx;
+      renderLayer(zone);
+      writeHash();
+    }
+
+    function renderLayer(zone) {
+      const tile = tileByIndex(state.sel[zone]);
+      $('sel-' + zone).value = tile.index;
+      const tag = $('tag-' + zone);
+      tag.textContent = `${tile.manufacturer} #${tile.index}`;
+      tag.classList.remove('missing');
+
+      const img = $('layer-' + zone);
+      const url = assetUrl(state.camera, zone, tile.index);
+      if (img.getAttribute('src') === url) return;
+      pending++;
+      updateLoading();
+      img.onload = () => { img.classList.remove('missing'); pending--; updateLoading(); };
+      img.onerror = () => {
+        img.classList.add('missing');
+        tag.textContent = `#${tile.index} – brak renderu`;
+        tag.classList.add('missing');
+        pending--; updateLoading();
+      };
+      img.src = url;
+    }
+
+    function updateLoading() { $('loading').classList.toggle('on', pending > 0); }
+
+    function renderAll() {
+      document.querySelectorAll('.cam-btn').forEach(b => b.classList.toggle('active', b.dataset.cam === state.camera));
+      ZONES.forEach(z => renderLayer(z.id));
+      writeHash();
+    }
+
+    function flash(msg) {
+      $('status').textContent = msg;
+      clearTimeout(flash.t);
+      flash.t = setTimeout(() => { $('status').textContent = ''; }, 3000);
+    }
+
+    function downloadComposite() {
+      if (pending > 0) { flash('Poczekaj, aż wszystkie warstwy się załadują.'); return; }
+      const canvas = document.createElement('canvas');
+      canvas.width = 2000; canvas.height = 1600;
+      const ctx = canvas.getContext('2d');
+      DRAW_ORDER.forEach(zone => {
+        const img = $('layer-' + zone);
+        if (!img.classList.contains('missing') && img.complete) ctx.drawImage(img, 0, 0, 2000, 1600);
+      });
+      const s = state.sel;
+      const link = document.createElement('a');
+      link.download = `lazienka_${state.camera}_P${s.podloga}_L${s.sciana_lewa}_M${s.sciana_srodkowa}_R${s.sciana_prawa}_S${s.sufit}.png`;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+
+    function wireButtons() {
+      document.querySelectorAll('.cam-btn').forEach(b => b.addEventListener('click', () => {
+        state.camera = b.dataset.cam;
+        renderAll();
+      }));
+      $('btn-random').addEventListener('click', () => {
+        ZONES.forEach(z => { state.sel[z.id] = TILES[Math.floor(Math.random() * TILES.length)].index; });
+        renderAll();
+      });
+      $('btn-match').addEventListener('click', () => {
+        ['sciana_lewa', 'sciana_prawa', 'sufit'].forEach(z => { state.sel[z] = state.sel.sciana_srodkowa; });
+        renderAll();
+      });
+      $('btn-copy').addEventListener('click', () => {
+        navigator.clipboard.writeText(location.href)
+          .then(() => flash('Skopiowano link do tego zestawu.'))
+          .catch(() => prompt('Skopiuj link:', location.href));
+      });
+      $('btn-download').addEventListener('click', downloadComposite);
+      window.addEventListener('hashchange', () => { readHash(); renderAll(); });
+    }
+
+    async function init() {
+      try {
+        const res = await fetch('data/tiles.json', { cache: 'no-cache' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        TILES = (await res.json()).tiles;
+      } catch (err) {
+        const box = $('error');
+        box.style.display = 'block';
+        box.textContent = location.protocol === 'file:'
+          ? 'Otwarto plik bezpośrednio z dysku — przeglądarka blokuje wczytanie katalogu. Uruchom: python -m http.server 8080 w folderze repo i otwórz http://localhost:8080'
+          : `Nie udało się wczytać data/tiles.json (${err.message}).`;
+        return;
+      }
+      buildControls();
+      readHash();
+      wireButtons();
+      renderAll();
+    }
+
+    init();
+  </script>
+</body>
+</html>
